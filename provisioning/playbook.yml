@@ -1,0 +1,13 @@
+---
+# To install a base LAMP stack enable "mysql, apache, php"
+# From there, enable any other tools your project requires.
+
+# TODO: To install a base MEAN stack enable "mongodb, express, angular, nodejs"
+# From there, enable any other tools your project requires.
+
+# To install a starter site and the dependant stack, simply enable your
+# desired tool such as "drupal", "wordpress", "laravel", "symfony", etc...
+
+# apt-get update and some basic tools required elsewhere
+
+- include: roles/homestead.yml

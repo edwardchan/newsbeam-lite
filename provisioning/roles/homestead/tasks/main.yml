@@ -1,0 +1,379 @@
+---
+# tasks file for settler
+
+# Update Package List
+- name: update package lists
+  apt: update_cache=yes cache_valid_time={{ settler_cache_valid_time }}
+  when: settler_update_cache
+
+- name: upgrade all packages
+  apt: upgrade=dist
+  when: settler_upgrade_packages
+
+
+# Force Locale
+- name: force locale
+  lineinfile: line='LC_ALL=en_US.UTF-8' dest=/etc/default/locale
+- name: locale gen
+  locale_gen: name=en_US.UTF-8 state=present
+
+
+# Install Some PPAs
+- name: install software-properties-common
+  apt: name={{ item }} state=present
+  with_items:
+    - "software-properties-common"
+    - "curl"
+
+- name: add package repositories
+  apt_repository: repo={{ item }}
+  with_items:
+    - "ppa:nginx/stable"
+    - "ppa:rwky/redis"
+    - "ppa:chris-lea/node.js"
+    - "ppa:ondrej/php5-5.6"
+
+- name: add postgresql apt key
+  apt_key: url=https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+- name: add postgresql repository
+  apt_repository: repo='deb http://apt.postgresql.org/pub/repos/apt/ trusty-pgdg main'
+
+- name: add blackfire apt key
+  apt_key: url=https://packagecloud.io/gpg.key
+
+- name: add blackfire repository
+  apt_repository: repo='deb http://packages.blackfire.io/debian any main'
+
+
+# Update Package Lists
+- name: update package lists
+  apt: update_cache=yes
+
+
+# Install Some Basic Packages
+- name: install some basic packages
+  apt: name={{ item }} state=present
+  with_items:
+    - "build-essential"
+    - "dos2unix"
+    - "gcc"
+    - "git"
+    - "libmcrypt4"
+    - "libpcre3-dev"
+    - "make"
+    - "python2.7-dev"
+    - "python-pip"
+    - "re2c"
+    - "supervisor"
+    - "unattended-upgrades"
+    - "whois"
+    - "vim"
+
+
+# Set My Timezone
+- name: set my timezone
+  file: src={{ settler_timezone_file }} dest=/etc/localtime state=link force=yes
+
+
+# Install PHP Stuffs
+- name: install php stuffs
+  apt: name={{ item }} state=present
+  with_items:
+    - "php5-cli"
+    - "php5-dev"
+    - "php-pear"
+    - "php5-mysqlnd"
+    - "php5-pgsql"
+    - "php5-sqlite"
+    - "php5-apcu"
+    - "php5-json"
+    - "php5-curl"
+    - "php5-gd"
+    - "php5-gmp"
+    - "php5-imap"
+    - "php5-mcrypt"
+    - "php5-xdebug"
+    - "php5-memcached"
+
+
+# Make MCrypt Available
+- name: make mcrypt available
+  #command: php5enmod mcrypt
+  file: src=/etc/php5/mods-available/mcrypt.ini dest=/etc/php5/cli/conf.d/20-mcrypt.ini state=link force=yes
+
+
+# Install Mailparse PECL Extension
+- name: install mailparse pecl extension
+  command: pecl install mailparse
+  register: pecl_result
+  changed_when: "'already installed' not in pecl_result.stdout"
+  failed_when: "pecl_result.stderr or ('ERROR' in pecl_result.stdout)"
+
+- name: create mailparse.ini
+  copy: content="extension=mailparse.so" dest=/etc/php5/mods-available/mailparse.ini
+
+- name: make mailparse available
+  file: src=/etc/php5/mods-available/mailparse.ini dest=/etc/php5/cli/conf.d/20-mailparse.ini state=link force=yes
+
+
+# Install Composer
+- name: install composer
+  shell: curl -sS https://getcomposer.org/installer | php && mv composer.phar /usr/local/bin/composer creates=/usr/local/bin/composer
+
+
+# Add Composer Global Bin To Path
+- name: add composer global bin to path
+  lineinfile: dest=/home/vagrant/.profile line=PATH="/home/vagrant/.composer/vendor/bin:$PATH" create=yes
+
+
+# Install Laravel Envoy
+- name: install laravel envoy
+  command: /usr/local/bin/composer global require "laravel/envoy=~1.0" creates=/home/vagrant/.composer/vendor/bin/envoy
+  sudo_user: vagrant
+
+
+# Set Some PHP CLI Settings
+# - name: set some php cli settings
+#   lineinfile: dest=/etc/php5/cli/php.ini regexp="{{ item.regex }}" line="{{ item.line }}"
+#   with_items:
+#     - {regex: "error_reporting = .*", line: "error_reporting = E_ALL"}
+#     - {regex: "display_errors = .*", line: "display_errors = On"}
+#     - {regex: "memory_limit = .*", line: "memory_limit = 512M"}
+#     - {regex: "date.timezone =.*", line: "date.timezone = UTC"}
+- name: set some php cli settings
+  template: src=php.ini dest=/etc/php5/cli/conf.d/00-php.ini
+
+
+# Install Nginx & PHP-FPM
+- name: install nginx and php-fpm
+  apt: name={{ item }} state=present
+  with_items:
+    - nginx
+    - php5-fpm
+
+- name: ensure nginx is running
+  service: name=nginx state=started enabled=yes
+
+- name: ensure php5-fpm is running
+  service: name=php5-fpm state=started enabled=yes
+
+- name: Configure Nginx
+  template: src=../templates/default.conf dest=/etc/nginx/sites-available/{{ project_name }}.conf
+  tags:
+    - nginx
+
+- name: Create symlink to {{ project_name }}
+  file: src=/etc/nginx/sites-available/{{ project_name }}.conf dest=/etc/nginx/sites-enabled/{{ project_name }}.conf state=link 
+
+- file: dest={{ item }} state=absent
+  with_items:
+    - "/etc/nginx/sites-enabled/default"
+    - "/etc/nginx/sites-available/default"
+  notify:
+    - restart nginx
+
+
+# Add The HHVM Key & Repository
+- apt_key: url=http://dl.hhvm.com/conf/hhvm.gpg.key state=present
+  tags: [hhvm]
+- apt_repository: repo='deb http://dl.hhvm.com/ubuntu trusty main' state=present update_cache=yes
+  tags: [hhvm]
+- apt: name=hhvm state=present
+  tags: [hhvm]
+
+
+# Configure HHVM To Run As Homestead
+- replace: dest=/etc/default/hhvm regexp='#RUN_AS_USER="www-data"' replace='RUN_AS_USER="vagrant"'
+  notify:
+    - restart hhvm
+  tags: [hhvm]
+
+
+# Start HHVM On System Start
+- name: ensure hhvm is running
+  service: name=hhvm state=started enabled=yes
+  tags: [hhvm]
+
+
+# Setup Some PHP-FPM Options
+- name: make mailparse available
+  file: src=/etc/php5/mods-available/mailparse.ini dest=/etc/php5/fpm/conf.d/20-mailparse.ini state=link force=yes
+
+- name: set some php fpm settings
+  lineinfile: dest=/etc/php5/fpm/php.ini regexp="{{ item.regex }}" line="{{ item.line }}"
+  with_items:
+    - {regex: "error_reporting = .*", line: "error_reporting = E_ALL"}
+    - {regex: "display_errors = .*", line: "display_errors = On"}
+    - {regex: "cgi.fix_pathinfo=.*", line: "cgi.fix_pathinfo=0"}
+    - {regex: "memory_limit = .*", line: "memory_limit = 512M"}
+    - {regex: "upload_max_filesize = .*", line: "upload_max_filesize = 100M"}
+    - {regex: "date.timezone =.*", line: "date.timezone = UTC"}
+
+- name: enable remote xdebug
+  template: dest=/etc/php5/mods-available/xdebug.ini src=xdebug.ini
+  notify:
+    - restart php5-fpm
+- file: src=../../mods-available/xdebug.ini dest=/etc/php5/fpm/conf.d/20-xdebug.ini state=link force=yes
+  notify:
+    - restart php5-fpm
+
+
+# Copy fastcgi_params to Nginx because they broke it on the PPA
+- name: copy fastcgi_params
+  template: dest=/etc/nginx/fastcgi_params src=fastcgi_params
+
+
+# Set The Nginx & PHP-FPM User
+- name: set nginx user
+  lineinfile: dest=/etc/nginx/nginx.conf regexp="{{ item.regex }}" line="{{ item.line }}"
+  with_items:
+    - {regex: "user .*;", line: "user vagrant;"}
+    - {regex: "server_names_hash_bucket_size.*", line: "server_names_hash_bucket_size 64;"}
+  notify:
+    - restart nginx
+
+- name: set php5-fpm user
+  lineinfile: dest=/etc/php5/fpm/pool.d/www.conf regexp="{{ item.regex }}" line="{{ item.line }}"
+  with_items:
+    - {regex: "^user = .*", line: "user = vagrant"}
+    - {regex: "^group = .*", line: "group = vagrant"}
+    - {regex: "listen.owner.*", line: "listen.owner = vagrant"}
+    - {regex: "listen.group.*", line: "listen.group = vagrant"}
+    - {regex: "listen.mode.*", line: "listen.mode = 0666"}
+  notify:
+    - restart php5-fpm
+
+
+# Add Vagrant User To WWW-Data
+- name: add vagrant user to www-data
+  user: name=vagrant groups=www-data append=yes
+
+
+# Install Node
+- apt: name=nodejs state=present
+- npm: name={{ item }} state=present global=yes
+  with_items:
+    - grunt-cli
+    - gulp
+    - bower
+
+
+# Install SQLite
+- apt: name={{ item }} state=present
+  with_items:
+    - sqlite3
+    - libsqlite3-dev
+
+
+# Install MySQL
+- debconf: name="mysql-server" question="mysql-server/root_password" vtype="password" value={{ settler_mysql_root_password }}
+- debconf: name="mysql-server" question="mysql-server/root_password_again" vtype="password" value={{ settler_mysql_root_password }}
+- template: src=my_credentials.cnf dest=/root/.my.cnf owner=root mode=0600
+- apt: name={{ item }} state=present
+  with_items:
+    - mysql-server-5.6
+    - python-mysqldb
+
+- name: ensure mysql is running
+  service: name=mysql state=started enabled=yes
+
+
+# Configure MySQL Remote Access
+- lineinfile: dest=/etc/mysql/my.cnf regexp="bind-address.*=.*" line="bind-address = 0.0.0.0"
+  notify:
+    - restart mysql
+
+- mysql_user: name=root host=0.0.0.0 priv=*.*:ALL,GRANT password={{ settler_mysql_root_password }}
+  notify:
+    - restart mysql
+
+- mysql_user: name=homestead host=0.0.0.0 priv=*.*:ALL,GRANT password={{ settler_mysql_root_password }}
+  notify:
+    - restart mysql
+
+- mysql_user: name=homestead host=% priv=*.*:ALL,GRANT password={{ settler_mysql_root_password }}
+  notify:
+    - restart mysql
+
+- mysql_db: name=homestead
+
+
+# Add Timezone Support To MySQL
+- name: add timezone support to mysql
+  shell: mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql --user=root --password=secret mysql
+
+
+# Install Postgres
+- name: install postgres
+  apt: name={{ item }} state=present
+  with_items:
+    - postgresql-9.4
+    - postgresql-contrib-9.4
+    - libpq-dev
+    - python-psycopg2
+
+- name: ensure postgresql is running
+  service: name=postgresql state=started enabled=yes
+
+
+# Configure Postgres Remote Access
+- lineinfile: dest=/etc/postgresql/9.4/main/postgresql.conf regexp="listen_addresses =.*" line="listen_addresses = '*'"
+  notify:
+    - restart postgresql
+
+- lineinfile: dest=/etc/postgresql/9.4/main/pg_hba.conf line="host    all             all             10.0.2.2/32               md5"
+  notify:
+    - restart postgresql
+
+# Fix bad syntax in sudoers
+# ref: https://github.com/mitchellh/vagrant/issues/892
+# ref: https://github.com/opscode/bento/pull/201
+- lineinfile: dest=/etc/sudoers regexp="%sudo\s*ALL=.*NOPASSWD:ALL" line="%sudo ALL=(ALL) NOPASSWD:ALL"
+
+- postgresql_user: name=homestead role_attr_flags=SUPERUSER,INHERIT,NOCREATEDB,NOCREATEROLE,NOREPLICATION password="{{ settler_mysql_root_password }}"
+  sudo: yes
+  sudo_user: postgres
+
+- postgresql_db: name=homestead owner=homestead
+  sudo: yes
+  sudo_user: postgres
+
+
+# Install Blackfire
+- name: install blackfire
+  apt: name={{ item }} state=present
+  with_items:
+    - blackfire-agent
+    - blackfire-php
+
+
+# Install A Few Other Things
+- name: install a few other things
+  apt: name={{ item }} state=present
+  with_items:
+    - redis-server
+    - memcached
+    - beanstalkd
+
+
+# Configure Beanstalkd
+- lineinfile: dest=/etc/default/beanstalkd regexp="START=yes" line="START=yes"
+
+- name: ensure beanstalkd is running
+  service: name=beanstalkd state=started enabled=yes
+
+
+# Enable Swap Memory
+- command: /bin/dd if=/dev/zero of=/var/swap.1 bs=1M count=1024 creates=/var/swap.1
+  register: swap
+- command: /sbin/mkswap /var/swap.1
+  when: swap.changed
+- command: /sbin/swapon /var/swap.1
+  when: swap.changed
+
+
+# Minimize The Disk Image
+#- command: dd if=/dev/zero of=/EMPTY bs=1M
+#- command: rm -f /EMPTY
+#- command: sync
