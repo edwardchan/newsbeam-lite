@@ -1,0 +1,1 @@
+{"virtualbox":{"/home/vagrant/newsbeam-lite":{"type":null,"mount_options":[],"guestpath":"/home/vagrant/newsbeam-lite","hostpath":"/home/edward/Sites/newsbeam-lite","disabled":false},"/vagrant":{"guestpath":"/vagrant","hostpath":"/home/edward/Sites/newsbeam-lite","disabled":false}}}
