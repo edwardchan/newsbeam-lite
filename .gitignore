@@ -1,12 +1,11 @@
 
+
 /vendor
-/node_modules
 Homestead.yaml
 Homestead.json
 .env
 
 vendor/
-node_modules/
 
 # Laravel 4 specific
 bootstrap/compiled.php
